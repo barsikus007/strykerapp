@@ -21,10 +21,20 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Install SDK platform, build-tools, NDK and CMake
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install the SDK the project asks for
         run: |
-          SDKMANAGER="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" "platforms;android-33" "build-tools;34.0.0" "ndk;25.1.8937393" "cmake;3.22.1"
+          # Read from the build file rather than repeating the numbers here, so
+          # bumping compileSdk or ndkVersion does not leave this behind. This
+          # used to install android-33 while app/build.gradle asked for 37, and
+          # left AGP to discover that on its own.
+          compile_sdk=$(sed -n 's/.*compileSdk[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' app/build.gradle | head -1)
+          ndk=$(sed -n "s/.*ndkVersion[[:space:]]\{1,\}['\"]\([^'\"]*\)['\"].*/\1/p" app/build.gradle | head -1)
+          echo "compileSdk=$compile_sdk ndk=$ndk"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-$compile_sdk" "ndk;$ndk" "cmake;3.22.1"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew

@@ -96,9 +96,18 @@ public class Core {
     public final static String SHELL = "bash";
     public final static String CHROOT_ROOT = "/data/local/stryker/release";
 
-    public final static String CHROOT_MARKER_VERSION = "6.5";
+    // The marker file's name is how a launch tells an installed chroot from a
+    // stale one, so it carries the tree's identity from app/build.gradle
+    // (BuildConfig.CHROOT_ID) rather than a version string maintained here. A
+    // constant next to this line drifted from the manifest once already, and
+    // nothing noticed: the manifest advertised a new tree while every existing
+    // install kept the old one and reported itself healthy.
+    public final static String CHROOT_MARKER_VERSION = BuildConfig.CHROOT_ID;
     public final static String CHROOT_MARKER = CHROOT_ROOT + "/" + CHROOT_MARKER_VERSION;
-    private final static String[] LEGACY_CHROOT_MARKERS = {"6.0", "4.0"};
+    // Pre-6.5 builds named the marker after the app version. They are not stale
+    // trees, they are a previous install to be migrated off, so they are matched
+    // by name in hasLegacyChroot() rather than being treated as current.
+    private final static String[] LEGACY_CHROOT_MARKERS = {"6.0", "4.0", "6.5"};
     public final static String HIDDEN_MAC = "XX:XX:XX:XX:XX:XX";
     public final String versionName = BuildConfig.VERSION_NAME;
     public final int versionInt = BuildConfig.VERSION_CODE;

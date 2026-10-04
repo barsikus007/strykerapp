@@ -11,8 +11,18 @@ TREE=${TREE:-$WORK_DIR/rootfs/tree}
 MNT=$WORK_DIR/rootfs/mnt
 VMOUT=$OUT_DIR/vm
 
+# CHROOT_ONLY=1 stops after the tarball. The ext4 image and the initrd need the
+# kernel's module tree, so they belong to the kernel build; a chroot-only run
+# (CI, or someone who has no kernel build) pays 6 GB of loop mount and a full
+# filesystem copy for a file nothing downloads.
+CHROOT_ONLY=${CHROOT_ONLY:-0}
+BUILD_VM() { [ "$CHROOT_ONLY" = 1 ]; }
+
 need_root
-need debootstrap mkfs.ext4 resize2fs e2fsck gzip tar chroot
+need debootstrap gzip tar chroot
+if ! BUILD_VM; then
+	need mkfs.ext4 resize2fs e2fsck
+fi
 QEMU=$(command -v qemu-aarch64-static || true)
 [ -n "$QEMU" ] || die "missing qemu-aarch64-static (apt install qemu-user-static)"
 grep -q enabled /proc/sys/fs/binfmt_misc/qemu-aarch64 2>/dev/null || die \
@@ -159,11 +169,22 @@ if [ -f "$VMOUT/kernel.release" ]; then
 	KREL=$(cat "$VMOUT/kernel.release")
 fi
 
+MODDIR=""
 if [ -n "$KREL" ] && [ -d "$VMOUT/modules/lib/modules/$KREL" ]; then
-	bash "$HERE/prune-firmware.sh" "$TREE" "$VMOUT/modules/lib/modules/$KREL"
-else
+	MODDIR=$VMOUT/modules/lib/modules/$KREL
+fi
+
+if [ -n "$MODDIR" ]; then
+	bash "$HERE/prune-firmware.sh" "$TREE" "$MODDIR"
+elif [ -n "$KREL" ]; then
 	warn "no module tree staged, so firmware cannot be pruned against it."
 	warn "The images will carry every firmware package in full (~190 MB)."
+elif ! BUILD_VM; then
+	# prune-firmware.sh keeps a static list of the firmware names the guest's
+	# adapters need when it is given no module tree, so a chroot-only run still
+	# prunes -- and still refuses if that list stops matching.
+	say "no kernel build to prune against, using the built-in firmware list"
+	bash "$HERE/prune-firmware.sh" "$TREE"
 fi
 
 bash "$HERE/scrub.sh" "$TREE"
@@ -182,6 +203,16 @@ case "$first" in
   /data/local/stryker and then looks for release/usr inside it." ;;
 esac
 record_artifact "$OUT_DIR/chroot64-debian.tar.gz"
+
+if BUILD_VM; then
+	cleanup
+	trap - EXIT
+	printf '\n'
+	printf '%-26s %s\n' "chroot tarball:" "$(human "$(stat -c%s "$OUT_DIR/chroot64-debian.tar.gz")")"
+	printf '\n%s\n' "chroot-only: no ext4 image and no initrd were built. Those need"
+	printf '%s\n' "the kernel module tree, so run images/build-all.sh for them."
+	exit 0
+fi
 
 if [ -n "$KREL" ] && [ -d "$VMOUT/modules/lib/modules/$KREL" ]; then
 	say "installing kernel modules ($KREL)"

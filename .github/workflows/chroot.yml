@@ -1,0 +1,273 @@
+name: Chroot
+
+# Builds chroot64-debian.tar.gz from images/rootfs/build.sh, so the Debian
+# system the app installs at first launch is something CI reproduces instead of
+# something one person assembles by hand and uploads.
+#
+# The build is a debootstrap of arm64 trixie executed on the host through
+# binfmt, and it mounts loop devices and makes device nodes, so it needs root.
+# Rather than depend on how the runner happens to be configured, the build runs
+# in a privileged container: the container is where the capabilities are asked
+# for, and if they are missing the failure is a shell check with a message
+# instead of a confusing mount error twenty minutes in.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Upload to the chroot release and propose a manifest update'
+        type: boolean
+        default: true
+      suite:
+        description: 'Debian suite to build'
+        type: choice
+        options: [ trixie ]
+        default: trixie
+      tag:
+        description: 'Release tag (default: chroot-<versionCode>)'
+        type: string
+        default: ''
+  push:
+    branches: [ main ]
+    paths:
+      - 'images/rootfs/**'
+      - 'images/build-all.sh'
+      - 'images/publish.sh'
+      - 'images/lib/**'
+      - 'app/build.gradle'
+  schedule:
+    # Mondays. Trixie moves underneath us, and a build that has quietly rotted
+    # is how a tarball stops matching the sha256 anybody can reproduce.
+    - cron: '17 5 * * 1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: chroot-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the Debian chroot
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    outputs:
+      tag: ${{ steps.target.outputs.tag }}
+      sha256: ${{ steps.meta.outputs.sha256 }}
+      size: ${{ steps.meta.outputs.size }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out which release this build is for
+        id: target
+        run: |
+          set -euo pipefail
+          version_code=$(sed -n 's/.*versionCode[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' \
+                         app/build.gradle | head -1)
+          [ -n "$version_code" ] || { echo '::error::no versionCode in app/build.gradle'; exit 1; }
+          tag='${{ inputs.tag }}'
+          [ -n "$tag" ] || tag="chroot-$version_code"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Room for the tree, the apt cache and the tarball
+        run: |
+          # images/work holds an unpacked trixie (~2.5 GB), the apt cache it
+          # filled on the way, and the tarball. More than the image ships.
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      - name: Teach the kernel to run arm64 binaries
+        run: docker run --rm --privileged tonistiigi/binfmt --install arm64
+
+      - name: Build the rootfs, audit it and write the manifest block
+        env:
+          SUITE: ${{ inputs.suite || 'trixie' }}
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker run --rm --privileged \
+            -e CHROOT_ONLY=1 \
+            -e SUITE="$SUITE" \
+            -e CHROOT_TAG="$TAG" \
+            -e REPO_SLUG="$GITHUB_REPOSITORY" \
+            -e SOURCE_DATE_EPOCH=0 \
+            -v "$GITHUB_WORKSPACE:/src" \
+            -v /proc/sys/fs/binfmt_misc:/proc/sys/fs/binfmt_misc \
+            -w /src \
+            debian:trixie \
+            bash -euo pipefail -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends \
+                debootstrap qemu-user-static binfmt-support \
+                ca-certificates wget pigz
+              bash images/build-all.sh
+              bash images/publish.sh \
+                "https://github.com/$REPO_SLUG/releases/download"
+            '
+
+      - name: Read the artifact
+        id: meta
+        env:
+          SUITE: ${{ inputs.suite || 'trixie' }}
+        run: |
+          set -euo pipefail
+          tarball=images/out/chroot64-debian.tar.gz
+          [ -f "$tarball" ] || { echo "::error::no tarball at $tarball"; exit 1; }
+
+          mkdir -p dist
+          cp -f "$tarball" dist/
+          # Everything the publish job needs goes in dist/ and only dist/, so
+          # upload-artifact keeps one root and the download paths are obvious.
+          cp -f images/out/publish/manifest-fragment.json dist/
+          cp -f images/out/publish/BUILDINFO.txt dist/rootfs-BUILDINFO.txt
+          cat images/out/artifacts.tsv
+
+          sha=$(sha256sum "$tarball" | cut -d' ' -f1)
+          size=$(stat -c%s "$tarball")
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "size=$size"  >> "$GITHUB_OUTPUT"
+          {
+            echo "tag:       ${{ steps.target.outputs.tag }}"
+            echo "suite:     $SUITE"
+            echo "tarball:   chroot64-debian.tar.gz"
+            echo "size:      $size"
+            echo "sha256:    $sha"
+            echo "reproduce: CHROOT_ONLY=1 images/build-all.sh"
+            echo
+            echo "manifest block that goes with it:"
+            echo "$(cat images/out/publish/manifest-fragment.json)"
+          } | tee dist/BUILDINFO.txt
+
+      - name: Confirm the tarball is shaped the way the app unpacks it
+        run: |
+          set -euo pipefail
+          # Slide3 untars into /data/local/stryker and then looks for
+          # release/usr, so a tarball rooted at the wrong directory installs
+          # cleanly and leaves the app with no system at all.
+          #
+          # The listing goes to a file first on purpose. Piping a 400k-entry
+          # `tar tzf` into head or grep -q leaves the writer on SIGPIPE, which
+          # under pipefail turns a perfectly good tarball into "release/bin/bash
+          # is missing".
+          listing=$(mktemp)
+          tar tzf dist/chroot64-debian.tar.gz > "$listing"
+
+          first=$(head -1 "$listing")
+          case "$first" in
+            release/*|release) echo "tarball root: $first" ;;
+            *) echo "::error::tarball starts with '$first', not 'release/'"; exit 1 ;;
+          esac
+
+          for required in release/bin/bash release/usr/bin release/bin/sh; do
+            # tar writes directory entries with a trailing slash, so match both
+            # spellings -- `grep -qx release/usr/bin` alone fails on a tarball
+            # that lists it as release/usr/bin/.
+            grep -Eq -- "^${required}/?\$" "$listing" \
+              || { echo "::error::$required is not in the tarball"; exit 1; }
+            echo "  $required present"
+          done
+          echo "  $(wc -l < "$listing") entries"
+
+      - name: Confirm the app knows about this chroot
+        run: |
+          set -euo pipefail
+          # The marker file's name is the only thing telling an installed chroot
+          # from a stale one (MainActivity.java), and it comes from
+          # BuildConfig.CHROOT_ID. If the manifest advertises a tree the app does
+          # not name, every existing install keeps the old one and reports itself
+          # healthy. Fail here rather than ship that.
+          #
+          # The Gradle value is a Groovy literal wrapping the Java literal, so the
+          # source reads '"chroot-debian-trixie-uml"' -- a quote inside a quote --
+          # and both quote styles have to come off the end.
+          app_chroot_id=$(awk -F'"CHROOT_ID", *' '/buildConfigField/ {print $2; exit}' \
+            app/build.gradle | tr -d "\"' ")
+          [ -n "$app_chroot_id" ] || {
+            echo "::error::cannot read CHROOT_ID out of app/build.gradle"
+            exit 1
+          }
+
+          manifest_id=$(python3 -c \
+            'import json,sys; print(json.load(open(sys.argv[1]))["core"]["debian_v2"]["version"])' \
+            dist/manifest-fragment.json)
+
+          echo "app/build.gradle CHROOT_ID : $app_chroot_id"
+          echo "manifest core.debian_v2    : $manifest_id"
+
+          if [ "$app_chroot_id" != "$manifest_id" ]; then
+            echo "::error::CHROOT_ID in app/build.gradle is '$app_chroot_id' but the manifest block says '$manifest_id'."
+            echo "::error::Publishing this chroot now leaves every existing install on the old tree, because the marker it checks is still named after the previous one."
+            echo "::error::Set CHROOT_ID in app/build.gradle to '$manifest_id' and merge that first, or re-run with CHROOT_VERSION set to what the app already expects."
+            exit 1
+          fi
+          echo "the app and the manifest agree on the chroot"
+
+      - name: Upload the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: chroot-${{ steps.target.outputs.tag }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Say what a build-only run did
+        if: github.event_name != 'workflow_dispatch' || !inputs.publish
+        run: |
+          {
+            echo "Built, not published."
+            echo
+            echo "This run only proves the tree still builds from these scripts."
+            echo "To attach the tarball to a release, run the workflow by hand with"
+            echo "publish=true, which publishes it and proposes the manifest update."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish and propose the manifest update
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.build.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the build
+        uses: actions/download-artifact@v4
+        with:
+          name: chroot-${{ needs.build.outputs.tag }}
+          path: dist
+
+      - name: Attach it to the chroot release
+        run: |
+          set -euo pipefail
+          # The tag is a rolling artifact name, not a git tag anybody cut, so
+          # --target the commit this ran on rather than a ref that does not
+          # exist. gh creates the tag there.
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --target "$GITHUB_SHA" \
+              --title "Stryker chroot $TAG" --generate-notes
+          gh release upload "$TAG" \
+            dist/chroot64-debian.tar.gz \
+            dist/BUILDINFO.txt \
+            dist/rootfs-BUILDINFO.txt --clobber
+          gh release view "$TAG" --json url --jq .url
+
+      - name: Propose the manifest block for it
+        run: |
+          set -euo pipefail
+          python3 images/lib/update-manifest.py stryker_manifest.json \
+            --core debian_v2 \
+            --fragment dist/publish/manifest-fragment.json
+
+      - name: Open the pull request
+        run: |
+          .github/scripts/manifest-pr.sh \
+            "manifest/chroot-$TAG" \
+            "Manifest: $TAG chroot (${{ needs.build.outputs.size }} bytes)" \
+            dist/BUILDINFO.txt

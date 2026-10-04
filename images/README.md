@@ -12,6 +12,47 @@ images/publish.sh https://github.com/zalexdev/strykerapp/releases/download
 Nothing here knows what machine it is on, and nothing here needs a machine
 that has been set up in a particular way beyond the packages listed below.
 
+## What CI does with this
+
+`chroot64-debian.tar.gz` is built by the **Chroot** workflow, and the app's own
+release is built and published by the **Release** workflow. Everything below is
+what those workflows run, so a published artifact and a local build are the same
+commands against the same scripts.
+
+| what | how |
+|---|---|
+| `chroot64-debian.tar.gz` | Chroot workflow, or `sudo CHROOT_ONLY=1 images/build-all.sh` |
+| `Image`, `initrd.img`, `rootfs.imgz` | still local: `sudo images/build-all.sh` — needs the kernel build and an Android NDK |
+| `Stryker.<version>.apk` | push the tag: `git tag 6.6 && git push origin 6.6` |
+
+```sh
+# The workflows need to write stryker_manifest.json, and that is a reviewed
+# change, not something a build gets to do on the side. Both publish steps
+# therefore end in a pull request carrying the new checksums:
+#
+#   images/lib/update-manifest.py   writes the block, refuses to touch the
+#                                   legacy core.chroot64 / core.chroot32 keys
+#   .github/scripts/manifest-pr.sh  commits it to a branch and opens the PR
+#
+# APPLY=1 does the manifest write locally, so you can see the diff before
+# committing it yourself:
+APPLY=1 images/publish.sh https://github.com/zalexdev/strykerapp/releases/download
+```
+
+The chroot workflow runs the build inside a privileged container rather than
+with `sudo` on the runner. `rootfs/build.sh` mounts and makes device nodes, and
+the container is where those capabilities are asked for explicitly — so if they
+are unavailable the run fails on a shell check with a message, instead of on a
+mount error twenty minutes in. It also runs `rootfs/audit.sh` before anything is
+uploaded, so an image with build-machine residue in it cannot be published.
+
+`CHROOT_ONLY=1` skips the two kernels and the ext4 image and stops after the
+tarball. Those need the kernel's module tree — the initrd is built against it,
+and `rootfs/prune-firmware.sh` reads it — so they belong to the kernel build,
+not to a chroot-only run. Without a module tree the firmware prune falls back
+to the static list in `prune-firmware.sh` instead of giving up and shipping
+every firmware package in full.
+
 ## What it makes
 
 | file | engine | what it is |
@@ -125,9 +166,10 @@ this kind have actually turned up, and it is written to be read and added to.
 
 ```
 images/
-  build-all.sh          everything, in dependency order
-  publish.sh            checksums + the stryker_manifest.json block
+  build-all.sh          everything, in dependency order (CHROOT_ONLY=1 for just the chroot)
+  publish.sh            checksums + the stryker_manifest.json block (APPLY=1 writes it)
   lib/common.sh         identity pinning, deterministic tar/gzip
+  lib/update-manifest.py  writes a built artifact into stryker_manifest.json
   kernel/
     build-vm.sh         arm64 Image for qemu -M virt
     build-uml.sh        ARCH=um SUBARCH=arm64, against bionic, static

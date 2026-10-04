@@ -10,8 +10,31 @@ BASE=${BASE%/}
 PUB=$OUT_DIR/publish
 CHROOT_TAG=${CHROOT_TAG:-chroot-main}
 ROOTLESS_TAG=${ROOTLESS_TAG:-rootless-main}
+REPO=${REPO:-$IMAGES_DIR/..}
+MANIFEST=${MANIFEST:-$REPO/stryker_manifest.json}
+SUITE=${SUITE:-trixie}
 
 [ -f "$OUT_DIR/artifacts.tsv" ] || die "nothing built yet -- run images/build-all.sh"
+
+# Which core block this build is for, taken from the app rather than guessed.
+# The app picks debian_v2 when its own versionCode clears that block's
+# min_version_code and falls back to debian, so a release has to write the block
+# the current build will actually read -- otherwise the manifest and the app
+# disagree and the sha256 the app verifies against is the wrong one.
+VERSION_CODE=${VERSION_CODE:-$(sed -n \
+	's/.*versionCode[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' \
+	"$REPO/app/build.gradle" 2>/dev/null | head -1)}
+[ -n "$VERSION_CODE" ] || die "cannot read versionCode from $REPO/app/build.gradle;
+  set VERSION_CODE explicitly"
+if [ -z "${CHROOT_KEY+x}" ]; then
+	if grep -q '"debian_v2"' "$MANIFEST" 2>/dev/null; then
+		CHROOT_KEY=debian_v2
+	else
+		CHROOT_KEY=debian
+	fi
+fi
+CHROOT_MIN_VC=${CHROOT_MIN_VC:-$VERSION_CODE}
+CHROOT_VERSION=${CHROOT_VERSION:-chroot-debian-$SUITE}
 
 rm -rf "$PUB"
 mkdir -p "$PUB/$CHROOT_TAG" "$PUB/$ROOTLESS_TAG" "$PUB/drivers"
@@ -63,13 +86,18 @@ asset() {
 }
 
 MF=$PUB/manifest-fragment.json
+
+[ -f "$PUB/$CHROOT_TAG/chroot64-debian.tar.gz" ] || die \
+	"no chroot tarball in $PUB/$CHROOT_TAG -- refusing to write a fragment
+  with a half-populated core block"
+
 {
 	printf '{\n'
 	printf '  "core": {\n'
-	printf '    "debian": {\n'
-	printf '      "min_version_code": 600,\n'
-	printf '      "version": "chroot-debian-%s",\n' "${SUITE:-trixie}"
-	printf '      "note": "Debian %s arm64. Same tree as the rootless VM image; drivers are built into the guest kernel, SSH is the transport.",\n' "${SUITE:-trixie}"
+	printf '    "%s": {\n' "$CHROOT_KEY"
+	printf '      "min_version_code": %s,\n' "$CHROOT_MIN_VC"
+	printf '      "version": "%s",\n' "$CHROOT_VERSION"
+	printf '      "note": "Debian %s arm64. Same tree as the rootless VM image; drivers are built into the guest kernel, SSH is the transport.",\n' "$SUITE"
 	printf '      "chroot64": {\n'
 	asset "$PUB/$CHROOT_TAG/chroot64-debian.tar.gz" \
 	      "$BASE/$CHROOT_TAG/chroot64-debian.tar.gz" '        '
@@ -97,9 +125,17 @@ if command -v python3 >/dev/null 2>&1; then
 		|| die "the fragment this wrote is not valid JSON: $MF"
 fi
 
+if [ "${APPLY:-0}" = 1 ]; then
+	say "writing the core block into $MANIFEST"
+	python3 "$IMAGES_DIR/lib/update-manifest.py" "$MANIFEST" \
+		--core "$CHROOT_KEY" --fragment "$MF" ${DRY_RUN:+--dry-run}
+fi
+
 printf '\n'
 find "$PUB" -type f -printf '%-52p %10s\n' | sort | sed 's/^/   /'
-printf '\n%s\n' "manifest block: $MF"
-printf '%s\n' "Merge it into stryker_manifest.json, upload out/publish/<tag>/* to the"
-printf '%s\n' "matching release tag, and keep the legacy core.chroot64/chroot32 keys as"
-printf '%s\n' "they are -- builds below version 6 read those directly and cannot be changed."
+printf '\n%s\n' "manifest block: core.$CHROOT_KEY (min_version_code $CHROOT_MIN_VC)"
+printf '%s\n' "Upload out/publish/<tag>/* to the matching release tag."
+printf '%s\n' "APPLY=1 does the manifest write for you -- that is what CI uses, and it"
+printf '%s\n' "is also the only way to get the sha256 right. Keep the legacy"
+printf '%s\n' "core.chroot64/chroot32 keys as they are: builds below version 6 read"
+printf '%s\n' "those directly and cannot be changed."

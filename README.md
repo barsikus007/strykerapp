@@ -5,8 +5,9 @@
 StrykerOSS bundles a curated set of network, wireless and web security tools into a single rooted-Android application, exposing them through a unified, modern UI. It runs a Debian trixie (arm64) `chroot` under `/data/local/stryker/release` so heavyweight tools (Nmap, Metasploit, Nuclei, Hydra, SearchSploit, etc.) execute natively on the device — the same rootfs the rootless QEMU VM boots when root is unavailable. A built-in terminal (drawer → **Terminal**, or the **Stryker Terminal** launcher icon) drops straight into that chroot — no external shell app required.
 
 - **Package**: `com.zalexdev.stryker`
-- **Version**: 6.0
-- **Min SDK**: 24 (Android 7.0) · **Target SDK**: 28
+- **Version**: 6.5.0 (versionCode 650)
+- **Min SDK**: 24 (Android 7.0) · **Target SDK**: 37
+- **ABI**: arm64-v8a only
 - **License**: [GNU GPL v3.0](LICENSE) (bundled third-party components keep their own licenses — see in-app *About → Open-source licenses*)
 - **Project site**: [stryker.zalexdev.com](https://stryker.zalexdev.com)
 - **Channel**: [t.me/strykerapp](https://t.me/strykerapp) · **Chat**: [t.me/strykerchat](https://t.me/strykerchat)
@@ -84,6 +85,36 @@ STRYKER_RELEASE_KEY_PASSWORD=...
 
 If the variables are not set, the release build is left unsigned so CI / contributors can still produce an APK.
 
+For CI, set the same four names as repository secrets. They matter: Android only
+lets an app update over an existing install when the signature matches, so a
+release built without them cannot be installed over 6.5. The Release workflow
+publishes an unsigned APK rather than failing, but says so loudly in the log —
+check for that warning before shipping.
+
+---
+
+## Releases
+
+Pushing a tag builds the app and attaches it to a GitHub Release:
+
+```sh
+git tag 6.6
+git push origin 6.6
+```
+
+The tag names both the release and the asset (`6.6` → `Stryker.6.6.apk`), and
+the workflow checks the version in the APK against the tag so a build cannot be
+filed under someone else's version number. Re-running a tag updates the release
+instead of failing.
+
+`stryker_manifest.json` carries the sha256 of every download, so it has to
+change whenever an artifact does. CI never writes it directly — it opens a pull
+request with the new checksums, computed from the file it actually built. Merge
+that PR and the app starts serving the new build.
+
+The Debian chroot the app installs is built by the Chroot workflow; see
+[`images/README.md`](images/README.md#what-ci-does-with-this).
+
 ---
 
 ## Installation (end users)
@@ -145,7 +176,7 @@ When adding a feature:
 - Reuse `Core.java` helpers for SharedPreferences, SQLite, asset extraction and root process execution rather than re-rolling them.
 - Funnel root commands through `Core.generateSuProcess()` (direct `su` or chroot dispatch).
 - Match the existing Material 3 design language — `MaterialCardView`, `MaterialButton`, dashboard accent colors, monospace terminals.
-- Keep `targetSdk = 28` unless you are ready to migrate all storage / permission code paths.
+- If you change an artifact the app downloads at runtime (the chroot, the VM images), the matching `stryker_manifest.json` checksums are a reviewed PR — do not hand-edit them.
 
 ---
 

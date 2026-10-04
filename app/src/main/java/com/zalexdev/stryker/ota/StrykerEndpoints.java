@@ -7,11 +7,21 @@ public final class StrykerEndpoints {
     public static final String MANIFEST_URL =
             "https://raw.githubusercontent.com/zalexdev/strykerapp/main/stryker_manifest.json";
 
+    // Where a chroot published for this exact build lives. The Chroot workflow
+    // names its release tag chroot-<versionCode>, so this cannot drift away
+    // from what was actually built the way a hardcoded tag did: this constant
+    // used to say chroot-main, so a 6.5 client whose manifest fetch failed
+    // pulled the versionCode-600 tree and called it current.
+    private static final String CHROOT_BASE = GITHUB_REPO + "/releases/download/chroot-";
     public static final String FALLBACK_CHROOT_64 =
-            "https://github.com/zalexdev/strykerapp/releases/download/chroot-main/chroot64-debian.tar.gz";
+            CHROOT_BASE + com.zalexdev.stryker.BuildConfig.VERSION_CODE
+                    + "/chroot64-debian.tar.gz";
 
+    // Deliberately a floating tag, unlike the chroot above. Nothing publishes a
+    // per-version rootless release, so pinning these to a versionCode would
+    // point at a tag that does not exist; rootless-main always resolves.
     private static final String ROOTLESS_BASE =
-            "https://github.com/zalexdev/strykerapp/releases/download/rootless-main/";
+            GITHUB_REPO + "/releases/download/rootless-main/";
     public static final String FALLBACK_ROOTLESS_QEMU     = ROOTLESS_BASE + "qemu-system-aarch64";
     public static final String FALLBACK_ROOTLESS_KERNEL   = ROOTLESS_BASE + "Image";
     public static final String FALLBACK_ROOTLESS_LIBSLIRP = ROOTLESS_BASE + "libslirp.so";

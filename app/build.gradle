@@ -14,6 +14,19 @@ android {
         versionCode 650
         versionName "6.5.0"
 
+        // Identity of the Debian tree this build expects, and the only thing
+        // that decides whether an installed chroot is still the right one --
+        // there is no chroot OTA path, only this marker. It has to change when
+        // a new chroot is published and not otherwise, so it deliberately does
+        // NOT track versionCode: bumping the app alone would make every user
+        // re-download ~300 MB of tree they already have.
+        //
+        // It must equal the "version" field of the core block in
+        // stryker_manifest.json. The Chroot workflow fails if the two drift,
+        // because publishing a chroot the app does not know about leaves every
+        // existing install silently running the old one.
+        buildConfigField "String", "CHROOT_ID", '"chroot-debian-trixie-uml"'
+
         ndk {
             abiFilters 'arm64-v8a'
         }
