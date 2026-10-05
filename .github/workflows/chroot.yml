@@ -108,7 +108,7 @@ jobs:
               apt-get install -y -qq --no-install-recommends \
                 debootstrap qemu-user-static binfmt-support \
                 ca-certificates wget pigz e2fsprogs
-              bash images/build-all.sh
+              bash images/rootfs/build.sh
               bash images/publish.sh \
                 "https://github.com/$REPO_SLUG/releases/download"
             '
