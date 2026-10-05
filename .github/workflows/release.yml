@@ -1,19 +1,28 @@
 name: Release
 
-# Pushing a tag publishes the APK to a GitHub Release. The tag names the
-# release and the asset: tag 6.5 -> Stryker.6.5.apk, which is the name
-# stryker_manifest.json's app.url points at.
+# Pushing a tag publishes the APK to a GitHub Release. After a chroot manifest
+# merge, the successful Android CI build also replaces the APK in that release
+# so its embedded offline chroot URL matches the new manifest. The tag names
+# the release and asset: 6.5 -> Stryker.6.5.apk.
 on:
   push:
     tags: [ 'v*', '*.*' ]
+  workflow_run:
+    workflows: [ Android CI ]
+    types: [ completed ]
   workflow_dispatch:
     inputs:
       tag:
         description: 'Tag to build the release from'
-        required: true
+        required: false
+        type: string
+      apk_run_id:
+        description: 'Android CI run ID to publish its existing APK (instead of rebuilding a tag)'
+        required: false
         type: string
 
 permissions:
+  actions: read
   contents: write
 
 concurrency:
@@ -23,6 +32,7 @@ concurrency:
 jobs:
   apk:
     name: Build and publish the APK
+    if: github.event_name != 'workflow_run' && (github.event_name != 'workflow_dispatch' || inputs.apk_run_id == '')
     runs-on: ubuntu-latest
 
     outputs:
@@ -238,3 +248,131 @@ jobs:
             "manifest/stryker-$TAG" \
             "Manifest: Stryker $TAG (${{ needs.apk.outputs.version-name }}, versionCode ${{ needs.apk.outputs.version-code }})" \
             dist/BUILDINFO.txt
+
+  manifest-apk:
+    name: Publish the APK built with the merged chroot manifest
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.apk_run_id != '')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Identify the successful Android CI build
+        id: source
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {data: run} = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: Number('${{ inputs.apk_run_id || github.event.workflow_run.id }}')
+            });
+            if (run.name !== 'Android CI' || run.event !== 'push' ||
+                run.head_branch !== 'main' || run.conclusion !== 'success') {
+              core.setFailed('The selected run is not a successful Android CI build on main');
+              return;
+            }
+            core.setOutput('sha', run.head_sha);
+
+      - name: Checkout the APK source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Check whether the chroot URL changed
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            old_url=$(git show HEAD^:stryker_manifest.json | python3 -c \
+              'import json,sys; print(json.load(sys.stdin)["core"]["debian_v2"]["chroot64"]["url"])')
+            new_url=$(python3 -c \
+              'import json,sys; print(json.load(open(sys.argv[1]))["core"]["debian_v2"]["chroot64"]["url"])' \
+              stryker_manifest.json)
+            if [ "$old_url" = "$new_url" ]; then
+              echo 'publish=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          version=$(sed -n "s/.*versionName[[:space:]]*['\"]\([^'\"]*\)['\"].*/\1/p" app/build.gradle | head -1)
+          [ -n "$version" ] || { echo '::error::versionName not found'; exit 1; }
+          tag=${version%.*}
+          git rev-parse --verify "refs/tags/$tag" >/dev/null || {
+            echo "::error::release tag $tag does not exist"
+            exit 1
+          }
+          echo 'publish=true' >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download the APK from Android CI
+        if: steps.meta.outputs.publish == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: app-release
+          run-id: ${{ inputs.apk_run_id || github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: dist
+
+      - name: Name the release asset
+        if: steps.meta.outputs.publish == 'true'
+        id: asset
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(dist/*.apk)
+          [ "${#apks[@]}" -eq 1 ] || {
+            echo '::error::expected exactly one release APK in the Android CI artifact'
+            exit 1
+          }
+          case "${apks[0]}" in
+            *-unsigned.apk) asset="Stryker.$TAG-unsigned.apk" ;;
+            *)             asset="Stryker.$TAG.apk" ;;
+          esac
+          mv "${apks[0]}" "dist/$asset"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Move the release tag to the APK source
+        if: steps.meta.outputs.publish == 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          current_main=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            [ "$current_main" = "$(git rev-parse HEAD)" ] || {
+              echo '::error::main moved since the APK was built; refusing to publish an older APK'
+              exit 1
+            }
+          else
+            git fetch --quiet origin main
+            source_url=$(python3 -c \
+              'import json,sys; print(json.load(open(sys.argv[1]))["core"]["debian_v2"]["chroot64"]["url"])' \
+              stryker_manifest.json)
+            main_url=$(git show FETCH_HEAD:stryker_manifest.json | python3 -c \
+              'import json,sys; print(json.load(sys.stdin)["core"]["debian_v2"]["chroot64"]["url"])')
+            [ "$source_url" = "$main_url" ] || {
+              echo '::error::the selected APK has an older chroot URL than main'
+              exit 1
+            }
+          fi
+          old=$(git rev-parse "refs/tags/$TAG")
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -c tag.gpgSign=false tag -fa "$TAG" -m "Stryker $TAG"
+          git push --force-with-lease="refs/tags/$TAG:$old" origin "refs/tags/$TAG"
+
+      - name: Publish the APK to the existing release
+        if: steps.meta.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Stryker ${{ steps.meta.outputs.tag }}
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: dist/${{ steps.asset.outputs.asset }}
