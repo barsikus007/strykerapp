@@ -99,11 +99,12 @@ for c in sshd ssh-keygen resize2fs e2fsck ps ip iw iptables mount sed grep \
          hostname aircrack-ng airodump-ng aireplay-ng airmon-ng reaver wash \
          bully pixiewps mdk4 hydra nmap macchanger hcxdumptool hcxpcapngtool \
          tcpdump socat python3 depmod modprobe; do
-	found=
-	for d in usr/sbin usr/bin sbin bin; do
-		[ -x "$TREE/$d/$c" ] && { found=1; break; }
-	done
-	[ -n "$found" ] || missing="$missing $c"
+	# Debian alternatives use absolute links into /etc/alternatives. Checking
+	# $TREE/usr/sbin/iptables from the host resolves those links against the
+	# host's /etc, so ask the guest shell instead.
+	chroot "$TREE" /bin/sh -c \
+		'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; command -v "$1" >/dev/null 2>&1' sh "$c" ||
+		missing="$missing $c"
 done
 [ -z "$missing" ] || die "the image would be missing:$missing
   Each of these is called by the guest's init or by a screen in the app, so an
