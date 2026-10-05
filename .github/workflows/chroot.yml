@@ -33,7 +33,6 @@ on:
       - 'images/build-all.sh'
       - 'images/publish.sh'
       - 'images/lib/**'
-      - 'app/build.gradle'
   schedule:
     # Mondays. Trixie moves underneath us, and a build that has quietly rotted
     # is how a tarball stops matching the sha256 anybody can reproduce.

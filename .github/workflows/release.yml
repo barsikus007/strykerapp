@@ -1,9 +1,8 @@
 name: Release
 
-# Pushing a tag publishes the APK to a GitHub Release. After a chroot manifest
-# merge, the successful Android CI build also replaces the APK in that release
-# so its embedded offline chroot URL matches the new manifest. The tag names
-# the release and asset: 6.5 -> Stryker.6.5.apk.
+# Pushing a tag publishes the APK to a GitHub Release. After a successful
+# Android CI build on main, it also replaces the APK in that release.
+# The tag names the release and asset: 6.5 -> Stryker.6.5.apk.
 on:
   push:
     tags: [ 'v*', '*.*' ]
@@ -249,7 +248,7 @@ jobs:
             dist/BUILDINFO.txt
 
   manifest-apk:
-    name: Publish the APK built with the merged chroot manifest
+    name: Publish the APK built by Android CI
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
@@ -281,22 +280,10 @@ jobs:
           ref: ${{ steps.source.outputs.sha }}
           fetch-depth: 0
 
-      - name: Check whether the chroot URL changed
+      - name: Resolve the release tag
         id: meta
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
-            old_url=$(git show HEAD^:stryker_manifest.json | python3 -c \
-              'import json,sys; print(json.load(sys.stdin)["core"]["debian_v2"]["chroot64"]["url"])')
-            new_url=$(python3 -c \
-              'import json,sys; print(json.load(open(sys.argv[1]))["core"]["debian_v2"]["chroot64"]["url"])' \
-              stryker_manifest.json)
-            if [ "$old_url" = "$new_url" ]; then
-              echo 'publish=false' >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-
           version=$(sed -n "s/.*versionName[[:space:]]*['\"]\([^'\"]*\)['\"].*/\1/p" app/build.gradle | head -1)
           [ -n "$version" ] || { echo '::error::versionName not found'; exit 1; }
           tag=${version%.*}
@@ -346,17 +333,6 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
             [ "$current_main" = "$(git rev-parse HEAD)" ] || {
               echo '::error::main moved since the APK was built; refusing to publish an older APK'
-              exit 1
-            }
-          else
-            git fetch --quiet origin main
-            source_url=$(python3 -c \
-              'import json,sys; print(json.load(open(sys.argv[1]))["core"]["debian_v2"]["chroot64"]["url"])' \
-              stryker_manifest.json)
-            main_url=$(git show FETCH_HEAD:stryker_manifest.json | python3 -c \
-              'import json,sys; print(json.load(sys.stdin)["core"]["debian_v2"]["chroot64"]["url"])')
-            [ "$source_url" = "$main_url" ] || {
-              echo '::error::the selected APK has an older chroot URL than main'
               exit 1
             }
           fi

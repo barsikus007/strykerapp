@@ -47,14 +47,7 @@ jobs:
           STRYKER_RELEASE_STORE_PASSWORD: ${{ secrets.STRYKER_RELEASE_STORE_PASSWORD }}
           STRYKER_RELEASE_KEY_ALIAS: ${{ secrets.STRYKER_RELEASE_KEY_ALIAS }}
           STRYKER_RELEASE_KEY_PASSWORD: ${{ secrets.STRYKER_RELEASE_KEY_PASSWORD }}
-        run: ./gradlew build --stacktrace
-
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+        run: ./gradlew assembleRelease --stacktrace
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
