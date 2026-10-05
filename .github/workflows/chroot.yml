@@ -23,7 +23,7 @@ on:
         options: [ trixie ]
         default: trixie
       tag:
-        description: 'Release tag (default: chroot-<versionCode>)'
+        description: 'Release tag prefix (default: chroot-<versionCode>; run ID and attempt are appended)'
         type: string
         default: ''
   push:
@@ -62,13 +62,17 @@ jobs:
 
       - name: Work out which release this build is for
         id: target
+        env:
+          TAG_PREFIX: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           version_code=$(sed -n 's/.*versionCode[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' \
                          app/build.gradle | head -1)
           [ -n "$version_code" ] || { echo '::error::no versionCode in app/build.gradle'; exit 1; }
-          tag='${{ inputs.tag }}'
-          [ -n "$tag" ] || tag="chroot-$version_code"
+          # Each rebuild gets a new URL, including re-runs and custom prefixes.
+          # Previously published files must keep matching the live manifest.
+          tag="${TAG_PREFIX:-chroot-$version_code}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git check-ref-format "refs/tags/$tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Room for the tree, the apt cache and the tarball
@@ -93,10 +97,11 @@ jobs:
             -e CHROOT_ONLY=1 \
             -e SUITE="$SUITE" \
             -e CHROOT_TAG="$TAG" \
+            -e BINFMT_DIR=/host-binfmt \
             -e REPO_SLUG="$GITHUB_REPOSITORY" \
             -e SOURCE_DATE_EPOCH=0 \
             -v "$GITHUB_WORKSPACE:/src" \
-            -v /proc/sys/fs/binfmt_misc:/proc/sys/fs/binfmt_misc \
+            -v /proc/sys/fs/binfmt_misc:/host-binfmt:ro \
             -w /src \
             debian:trixie \
             bash -euo pipefail -c '
@@ -140,38 +145,11 @@ jobs:
             echo "reproduce: CHROOT_ONLY=1 images/build-all.sh"
             echo
             echo "manifest block that goes with it:"
-            echo "$(cat images/out/publish/manifest-fragment.json)"
+            cat images/out/publish/manifest-fragment.json
           } | tee dist/BUILDINFO.txt
 
       - name: Confirm the tarball is shaped the way the app unpacks it
-        run: |
-          set -euo pipefail
-          # Slide3 untars into /data/local/stryker and then looks for
-          # release/usr, so a tarball rooted at the wrong directory installs
-          # cleanly and leaves the app with no system at all.
-          #
-          # The listing goes to a file first on purpose. Piping a 400k-entry
-          # `tar tzf` into head or grep -q leaves the writer on SIGPIPE, which
-          # under pipefail turns a perfectly good tarball into "release/bin/bash
-          # is missing".
-          listing=$(mktemp)
-          tar tzf dist/chroot64-debian.tar.gz > "$listing"
-
-          first=$(head -1 "$listing")
-          case "$first" in
-            release/*|release) echo "tarball root: $first" ;;
-            *) echo "::error::tarball starts with '$first', not 'release/'"; exit 1 ;;
-          esac
-
-          for required in release/bin/bash release/usr/bin release/bin/sh; do
-            # tar writes directory entries with a trailing slash, so match both
-            # spellings -- `grep -qx release/usr/bin` alone fails on a tarball
-            # that lists it as release/usr/bin/.
-            grep -Eq -- "^${required}/?\$" "$listing" \
-              || { echo "::error::$required is not in the tarball"; exit 1; }
-            echo "  $required present"
-          done
-          echo "  $(wc -l < "$listing") entries"
+        run: python3 images/lib/check-chroot.py dist/chroot64-debian.tar.gz
 
       - name: Confirm the app knows about this chroot
         run: |
@@ -233,6 +211,9 @@ jobs:
     needs: build
     if: github.event_name == 'workflow_dispatch' && inputs.publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ needs.build.outputs.tag }}
@@ -246,26 +227,25 @@ jobs:
           path: dist
 
       - name: Attach it to the chroot release
-        run: |
-          set -euo pipefail
-          # The tag is a rolling artifact name, not a git tag anybody cut, so
-          # --target the commit this ran on rather than a ref that does not
-          # exist. gh creates the tag there.
-          gh release view "$TAG" >/dev/null 2>&1 || \
-            gh release create "$TAG" --target "$GITHUB_SHA" \
-              --title "Stryker chroot $TAG" --generate-notes
-          gh release upload "$TAG" \
-            dist/chroot64-debian.tar.gz \
-            dist/BUILDINFO.txt \
-            dist/rootfs-BUILDINFO.txt --clobber
-          gh release view "$TAG" --json url --jq .url
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Stryker chroot ${{ needs.build.outputs.tag }}
+          generate_release_notes: true
+          overwrite_files: false
+          fail_on_unmatched_files: true
+          files: |
+            dist/chroot64-debian.tar.gz
+            dist/BUILDINFO.txt
+            dist/rootfs-BUILDINFO.txt
 
       - name: Propose the manifest block for it
         run: |
           set -euo pipefail
           python3 images/lib/update-manifest.py stryker_manifest.json \
             --core debian_v2 \
-            --fragment dist/publish/manifest-fragment.json
+            --fragment dist/manifest-fragment.json
 
       - name: Open the pull request
         run: |

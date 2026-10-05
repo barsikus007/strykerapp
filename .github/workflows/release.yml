@@ -27,7 +27,7 @@ jobs:
 
     outputs:
       tag: ${{ steps.pick.outputs.tag }}
-      asset: ${{ steps.pick.outputs.asset }}
+      asset: ${{ steps.meta.outputs.asset }}
       version-code: ${{ steps.meta.outputs.version_code }}
       version-name: ${{ steps.meta.outputs.version_name }}
       signed: ${{ steps.verify.outputs.signed }}
@@ -59,6 +59,8 @@ jobs:
 
       - name: Set up the Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install the SDK the project asks for
         run: |
@@ -111,21 +113,29 @@ jobs:
           [ "$short" = "$apk_short" ] || echo "::warning::tag ${{ steps.pick.outputs.tag }} but versionName is $version_name -- check this release is not misfiled"
 
           mkdir -p dist
-          cp -f "$apk" "dist/${{ steps.pick.outputs.asset }}"
+          asset='${{ steps.pick.outputs.asset }}'
+          # Unsigned builds must not replace the signed APK used by OTA.
+          case "$apk" in
+            *-unsigned.apk) asset="${asset%.apk}-unsigned.apk" ;;
+          esac
+          cp -f "$apk" "dist/$asset"
           if [ -f app/build/outputs/mapping/release/mapping.txt ]; then
             cp -f app/build/outputs/mapping/release/mapping.txt \
-                 "dist/Stryker.${short}-mapping.txt"
+                 "dist/${asset%.apk}-mapping.txt"
           fi
 
-          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
-          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          {
+            echo "asset=$asset"
+            echo "version_code=$version_code"
+            echo "version_name=$version_name"
+          } >> "$GITHUB_OUTPUT"
           {
             echo "tag:          ${{ steps.pick.outputs.tag }}"
-            echo "asset:        ${{ steps.pick.outputs.asset }}"
+            echo "asset:        $asset"
             echo "versionCode:  $version_code"
             echo "versionName:  $version_name"
-            echo "size:         $(stat -c%s "dist/${{ steps.pick.outputs.asset }}")"
-            echo "sha256:       $(sha256sum "dist/${{ steps.pick.outputs.asset }}" | cut -d' ' -f1)"
+            echo "size:         $(stat -c%s "dist/$asset")"
+            echo "sha256:       $(sha256sum "dist/$asset" | cut -d' ' -f1)"
             echo "abis:         $(printf '%s' "$badging" | grep -o "native-code: .*" || echo none)"
           } | tee dist/BUILDINFO.txt
 
@@ -133,7 +143,7 @@ jobs:
         id: verify
         run: |
           set -euo pipefail
-          asset="dist/${{ steps.pick.outputs.asset }}"
+          asset="dist/${{ steps.meta.outputs.asset }}"
           sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/opt/android-sdk}}"
           apksigner=$(find "$sdk" -name apksigner -type f 2>/dev/null | sort -V | tail -1 || true)
           if [ -z "$apksigner" ]; then
@@ -145,10 +155,8 @@ jobs:
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
             echo "signed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::this APK is UNSIGNED -- no STRYKER_RELEASE_* secret is"
-            echo "::warning::configured, so app/build.gradle left it unsigned."
-            echo "::warning::Android will refuse to install it over an existing"
-            echo "::warning::6.5, and the update prompt will not offer it."
+            echo "::notice::Unsigned APK built without release signing credentials."
+            echo "::notice::The artifact will be published; the OTA manifest will not be updated."
           fi
 
       - name: Upload the build
@@ -163,10 +171,6 @@ jobs:
     name: Publish to the GitHub Release
     needs: apk
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
-      TAG: ${{ needs.apk.outputs.tag }}
-      ASSET: ${{ needs.apk.outputs.asset }}
     steps:
       - name: Download the build
         uses: actions/download-artifact@v4
@@ -174,32 +178,39 @@ jobs:
           name: apk-${{ needs.apk.outputs.tag }}
           path: dist
 
-      - name: Create the release if it is not there yet
+      - name: Select release assets
+        id: assets
+        env:
+          ASSET: ${{ needs.apk.outputs.asset }}
         run: |
           set -euo pipefail
-          # Re-running a tag must update the release, not fail on it.
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --target "$TAG" --title "Stryker $TAG" \
-              --generate-notes
-          fi
+          test -s "dist/$ASSET"
+          # Mapping files exist only when R8 ran; the APK is always required.
+          shopt -s nullglob
+          {
+            echo 'files<<EOF'
+            printf '%s\n' "dist/$ASSET" dist/*-mapping.txt
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Upload the assets
-        run: |
-          set -euo pipefail
-          gh release upload "$TAG" "dist/$ASSET" --clobber
-          # R8 renames everything, so the mapping is what makes a stack trace
-          # from a user's crash report readable. It ships only if R8 ran.
-          for extra in dist/*-mapping.txt; do
-            if [ -e "$extra" ]; then
-              gh release upload "$TAG" "$extra" --clobber
-            fi
-          done
-          gh release view "$TAG" --json url --jq .url
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.apk.outputs.tag }}
+          name: Stryker ${{ needs.apk.outputs.tag }}
+          generate_release_notes: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: ${{ steps.assets.outputs.files }}
 
   manifest:
     name: Propose the manifest update
-    needs: apk
+    needs: [apk, release]
+    if: needs.apk.outputs.signed == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ needs.apk.outputs.tag }}
@@ -217,6 +228,8 @@ jobs:
           set -euo pipefail
           python3 images/lib/update-manifest.py stryker_manifest.json \
             --app "dist/${{ needs.apk.outputs.asset }}" \
+            --app-version-code "${{ needs.apk.outputs.version-code }}" \
+            --app-version-name "${{ needs.apk.outputs.version-name }}" \
             --app-url "https://github.com/${{ github.repository }}/releases/download/$TAG/${{ needs.apk.outputs.asset }}"
 
       - name: Open the pull request

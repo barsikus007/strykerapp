@@ -6,7 +6,8 @@ so repointing it at a new build has to be done from the file that was actually
 produced, not by hand. Two things get written:
 
   --core KEY --fragment F   the core[K] block from images/publish.sh
-  --app FILE --app-url U    the app block, sized and hashed from FILE
+  --app FILE --app-url U --app-version-code N --app-version-name V
+                           the app block, sized and hashed from FILE
 
 The legacy core.chroot64 / core.chroot32 keys are never touched. Shipped builds
 below version 6 read those two directly and cannot be redirected, so a release
@@ -67,13 +68,18 @@ def apply_core(manifest, key, fragment):
     return before, block
 
 
-def apply_app(manifest, path, url):
+def apply_app(manifest, path, url, version_code, version_name):
     block = manifest.get("app")
     if not isinstance(block, dict):
         sys.exit("update-manifest.py: the manifest has no 'app' object")
     if not url:
         sys.exit("update-manifest.py: --app needs --app-url")
+    if version_code is None or version_code <= 0 or not version_name or not version_name.strip():
+        sys.exit("update-manifest.py: --app needs a positive --app-version-code "
+                 "and a non-empty --app-version-name from the APK")
     before = dict(block)
+    block["versionCode"] = version_code
+    block["versionName"] = version_name
     block["url"] = url
     block["sha256"] = sha256_of(path)
     block["size"] = os.path.getsize(path)
@@ -99,6 +105,8 @@ def main():
     parser.add_argument("--app", metavar="FILE",
                         help="APK to size and hash into the app block")
     parser.add_argument("--app-url", metavar="URL")
+    parser.add_argument("--app-version-code", type=int, metavar="N")
+    parser.add_argument("--app-version-name", metavar="VERSION")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -119,8 +127,10 @@ def main():
     if args.app:
         if manifest is None:
             manifest = load(args.manifest)
-        before, after = apply_app(manifest, args.app, args.app_url)
-        changes.append(("app", before, after, ["url", "sha256", "size"]))
+        before, after = apply_app(manifest, args.app, args.app_url,
+                                  args.app_version_code, args.app_version_name)
+        changes.append(("app", before, after,
+                        ["versionCode", "versionName", "url", "sha256", "size"]))
 
     if not changes:
         sys.exit("update-manifest.py: nothing to do -- pass --core/--fragment "

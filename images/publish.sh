@@ -34,7 +34,10 @@ if [ -z "${CHROOT_KEY+x}" ]; then
 	fi
 fi
 CHROOT_MIN_VC=${CHROOT_MIN_VC:-$VERSION_CODE}
-CHROOT_VERSION=${CHROOT_VERSION:-chroot-debian-$SUITE}
+CHROOT_VERSION=${CHROOT_VERSION:-$(awk -F'"CHROOT_ID", *' \
+	'/"CHROOT_ID"/ {print $2; exit}' "$REPO/app/build.gradle" | tr -d "\"' ")}
+[ -n "$CHROOT_VERSION" ] || die "cannot read CHROOT_ID from $REPO/app/build.gradle;
+  set CHROOT_VERSION explicitly"
 
 rm -rf "$PUB"
 mkdir -p "$PUB/$CHROOT_TAG" "$PUB/$ROOTLESS_TAG" "$PUB/drivers"

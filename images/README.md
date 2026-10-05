@@ -53,6 +53,23 @@ not to a chroot-only run. Without a module tree the firmware prune falls back
 to the static list in `prune-firmware.sh` instead of giving up and shipping
 every firmware package in full.
 
+Chroot releases use `<prefix>-<run-id>-<attempt>` tags; the default prefix is
+`chroot-<versionCode>`. The workflow's `tag` input overrides only the prefix.
+Rebuilds never replace an earlier tarball, so the currently published manifest
+keeps working while its replacement PR is reviewed. The fragment records the
+complete download URL. `CHROOT_VERSION` defaults to `CHROOT_ID` in
+`app/build.gradle`; this compatibility marker is separate from the release tag.
+The APK's fallback URL is also taken from its checked-in manifest at build time,
+so it can find a published chroot even when an app-only release bumps versionCode.
+
+Both manifest PR jobs request `contents: write` and `pull-requests: write`.
+The repository must also allow GitHub Actions to create pull requests under
+Settings → Actions → General → Workflow permissions.
+
+Run the offline regression checks with
+`python3 -B -m unittest discover -s images/tests -v`. They use temporary fixtures,
+require neither root nor network access, and do not publish releases or open PRs.
+
 ## What it makes
 
 | file | engine | what it is |

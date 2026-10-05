@@ -16,16 +16,17 @@ VMOUT=$OUT_DIR/vm
 # (CI, or someone who has no kernel build) pays 6 GB of loop mount and a full
 # filesystem copy for a file nothing downloads.
 CHROOT_ONLY=${CHROOT_ONLY:-0}
-BUILD_VM() { [ "$CHROOT_ONLY" = 1 ]; }
+chroot_only() { [ "$CHROOT_ONLY" = 1 ]; }
 
 need_root
 need debootstrap gzip tar chroot
-if ! BUILD_VM; then
+if ! chroot_only; then
 	need mkfs.ext4 resize2fs e2fsck
 fi
 QEMU=$(command -v qemu-aarch64-static || true)
 [ -n "$QEMU" ] || die "missing qemu-aarch64-static (apt install qemu-user-static)"
-grep -q enabled /proc/sys/fs/binfmt_misc/qemu-aarch64 2>/dev/null || die \
+BINFMT_DIR=${BINFMT_DIR:-/proc/sys/fs/binfmt_misc}
+grep -q enabled "$BINFMT_DIR/qemu-aarch64" 2>/dev/null || die \
 "qemu-aarch64 binfmt is not registered, so the arm64 chroot cannot run.
   systemctl restart binfmt-support
   or: docker run --privileged --rm tonistiigi/binfmt --install arm64"
@@ -179,7 +180,7 @@ if [ -n "$MODDIR" ]; then
 elif [ -n "$KREL" ]; then
 	warn "no module tree staged, so firmware cannot be pruned against it."
 	warn "The images will carry every firmware package in full (~190 MB)."
-elif ! BUILD_VM; then
+else
 	# prune-firmware.sh keeps a static list of the firmware names the guest's
 	# adapters need when it is given no module tree, so a chroot-only run still
 	# prunes -- and still refuses if that list stops matching.
@@ -204,7 +205,7 @@ case "$first" in
 esac
 record_artifact "$OUT_DIR/chroot64-debian.tar.gz"
 
-if BUILD_VM; then
+if chroot_only; then
 	cleanup
 	trap - EXIT
 	printf '\n'

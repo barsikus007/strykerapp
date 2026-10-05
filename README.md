@@ -6,7 +6,7 @@ StrykerOSS bundles a curated set of network, wireless and web security tools int
 
 - **Package**: `com.zalexdev.stryker`
 - **Version**: 6.5.0 (versionCode 650)
-- **Min SDK**: 24 (Android 7.0) · **Target SDK**: 37
+- **Min SDK**: 24 (Android 7.0) · **Target SDK**: 36
 - **ABI**: arm64-v8a only
 - **License**: [GNU GPL v3.0](LICENSE) (bundled third-party components keep their own licenses — see in-app *About → Open-source licenses*)
 - **Project site**: [stryker.zalexdev.com](https://stryker.zalexdev.com)
@@ -85,11 +85,14 @@ STRYKER_RELEASE_KEY_PASSWORD=...
 
 If the variables are not set, the release build is left unsigned so CI / contributors can still produce an APK.
 
-For CI, set the same four names as repository secrets. They matter: Android only
-lets an app update over an existing install when the signature matches, so a
-release built without them cannot be installed over 6.5. The Release workflow
-publishes an unsigned APK rather than failing, but says so loudly in the log —
-check for that warning before shipping.
+CI does not require signing secrets. Android CI uploads debug and release APKs
+as build artifacts. The Release workflow publishes unsigned builds as
+`Stryker.<version>-unsigned.apk` and skips their OTA manifest PR.
+
+For signed releases, set the same four names as repository secrets and make the
+keystore file available at the configured path on the runner. Signed APKs keep
+the `Stryker.<version>.apk` name and the manifest PR workflow. Updating an existing
+installation requires its original signing key.
 
 ---
 

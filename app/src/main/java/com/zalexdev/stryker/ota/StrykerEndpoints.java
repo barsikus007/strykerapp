@@ -9,15 +9,10 @@ public final class StrykerEndpoints {
     public static final String MANIFEST_URL =
             "https://raw.githubusercontent.com/" + REPO + "/main/stryker_manifest.json";
 
-    // Where a chroot published for this exact build lives. The Chroot workflow
-    // names its release tag chroot-<versionCode>, so this cannot drift away
-    // from what was actually built the way a hardcoded tag did: this constant
-    // used to say chroot-main, so a 6.5 client whose manifest fetch failed
-    // pulled the versionCode-600 tree and called it current.
-    private static final String CHROOT_BASE = GITHUB_REPO + "/releases/download/chroot-";
+    // Use the chroot pinned in the build's manifest if the remote fetch fails.
+    // Keep the repository configurable so forks use their own release assets.
     public static final String FALLBACK_CHROOT_64 =
-            CHROOT_BASE + com.zalexdev.stryker.BuildConfig.VERSION_CODE
-                    + "/chroot64-debian.tar.gz";
+            GITHUB_REPO + com.zalexdev.stryker.BuildConfig.CHROOT_DOWNLOAD_PATH;
 
     // Deliberately a floating tag, unlike the chroot above. Nothing publishes a
     // per-version rootless release, so pinning these to a versionCode would
