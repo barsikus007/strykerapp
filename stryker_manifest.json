@@ -26,11 +26,11 @@
     "debian_v2": {
       "min_version_code": 650,
       "version": "chroot-debian-trixie-uml",
-      "note": "Debian trixie arm64, same tree as rootless-650. arm64-v8a only.",
+      "note": "Debian trixie arm64. Same tree as the rootless VM image; drivers are built into the guest kernel, SSH is the transport.",
       "chroot64": {
-        "url": "https://github.com/zalexdev/strykerapp/releases/download/chroot-650/chroot64-debian.tar.gz",
-        "sha256": "c67549857b7741e5f2c809e701c6f5cfcacb971fe4a76ad166fecb7b2d4a9d74",
-        "size": 296674820
+        "url": "https://github.com/barsikus007/strykerapp/releases/download/chroot-650-37325671309-1/chroot64-debian.tar.gz",
+        "sha256": "57e7d436816c0974c28f950debe11ed19d88f0fbff31fedf5903a6634c108046",
+        "size": 280669793
       }
     }
   },
