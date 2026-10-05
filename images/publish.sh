@@ -33,6 +33,13 @@ if [ -z "${CHROOT_KEY+x}" ]; then
 		CHROOT_KEY=debian
 	fi
 fi
+if [ -z "${ROOTLESS_KEY+x}" ]; then
+	if grep -q '"rootless_v2"' "$MANIFEST" 2>/dev/null; then
+		ROOTLESS_KEY=rootless_v2
+	else
+		ROOTLESS_KEY=rootless
+	fi
+fi
 CHROOT_MIN_VC=${CHROOT_MIN_VC:-$VERSION_CODE}
 CHROOT_VERSION=${CHROOT_VERSION:-$(awk -F'"CHROOT_ID", *' \
 	'/"CHROOT_ID"/ {print $2; exit}' "$REPO/app/build.gradle" | tr -d "\"' ")}
@@ -129,9 +136,13 @@ if command -v python3 >/dev/null 2>&1; then
 fi
 
 if [ "${APPLY:-0}" = 1 ]; then
-	say "writing the core block into $MANIFEST"
+	say "writing the manifest blocks into $MANIFEST"
+	extra_args=()
+	if [ -f "$PUB/$ROOTLESS_TAG/rootfs.imgz" ]; then
+		extra_args+=(--rootless "$ROOTLESS_KEY")
+	fi
 	python3 "$IMAGES_DIR/lib/update-manifest.py" "$MANIFEST" \
-		--core "$CHROOT_KEY" --fragment "$MF" ${DRY_RUN:+--dry-run}
+		--core "$CHROOT_KEY" "${extra_args[@]}" --fragment "$MF" ${DRY_RUN:+--dry-run}
 fi
 
 printf '\n'

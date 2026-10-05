@@ -68,6 +68,24 @@ def apply_core(manifest, key, fragment):
     return before, block
 
 
+def apply_rootless(manifest, key, fragment):
+    rootless = manifest.get(key)
+    if not isinstance(rootless, dict):
+        sys.exit("update-manifest.py: the manifest has no '%s' object" % key)
+    frag_rootless = fragment.get("rootless")
+    if not isinstance(frag_rootless, dict):
+        sys.exit("update-manifest.py: the fragment has no 'rootless' object")
+    before = dict(rootless)
+    for asset_name in ("rootfs", "kernel", "initrd", "qemu", "libslirp", "uml_kernel", "uml_stub"):
+        if asset_name in frag_rootless:
+            rootless[asset_name] = frag_rootless[asset_name]
+    if "version" in frag_rootless:
+        rootless["version"] = frag_rootless["version"]
+    if frag_rootless.get("kernel_release"):
+        rootless["kernel_release"] = frag_rootless["kernel_release"]
+    return before, rootless
+
+
 def apply_app(manifest, path, url, version_code, version_name):
     block = manifest.get("app")
     if not isinstance(block, dict):
@@ -100,6 +118,8 @@ def main():
     parser.add_argument("manifest")
     parser.add_argument("--core", metavar="KEY",
                         help="core block to replace, e.g. debian_v2")
+    parser.add_argument("--rootless", metavar="KEY",
+                        help="rootless block to replace, e.g. rootless_v2")
     parser.add_argument("--fragment", metavar="FILE",
                         help="fragment written by images/publish.sh")
     parser.add_argument("--app", metavar="FILE",
@@ -116,13 +136,18 @@ def main():
     changes = []
     manifest = None
 
-    if args.core or args.fragment:
-        if not (args.core and args.fragment):
-            sys.exit("update-manifest.py: --core and --fragment go together")
+    if args.core or args.rootless:
+        if not args.fragment:
+            sys.exit("update-manifest.py: --core and --rootless require --fragment")
         manifest = load(args.manifest)
         fragment = load(args.fragment)
-        before, after = apply_core(manifest, args.core, fragment)
-        changes.append(("core.%s" % args.core, before, after, ["chroot64"]))
+        if args.core:
+            before, after = apply_core(manifest, args.core, fragment)
+            changes.append(("core.%s" % args.core, before, after, ["chroot64"]))
+        if args.rootless:
+            before, after = apply_rootless(manifest, args.rootless, fragment)
+            keys = [k for k in ("rootfs", "kernel", "initrd", "version") if k in after]
+            changes.append(("%s" % args.rootless, before, after, keys))
 
     if args.app:
         if manifest is None:
@@ -133,7 +158,7 @@ def main():
                         ["versionCode", "versionName", "url", "sha256", "size"]))
 
     if not changes:
-        sys.exit("update-manifest.py: nothing to do -- pass --core/--fragment "
+        sys.exit("update-manifest.py: nothing to do -- pass --core/--rootless/--fragment "
                  "or --app")
 
     for label, before, after, keys in changes:

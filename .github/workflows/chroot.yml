@@ -93,7 +93,6 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm --privileged \
-            -e CHROOT_ONLY=1 \
             -e SUITE="$SUITE" \
             -e CHROOT_TAG="$TAG" \
             -e BINFMT_DIR=/host-binfmt \
@@ -108,7 +107,7 @@ jobs:
               apt-get update -qq
               apt-get install -y -qq --no-install-recommends \
                 debootstrap qemu-user-static binfmt-support \
-                ca-certificates wget pigz
+                ca-certificates wget pigz e2fsprogs
               bash images/build-all.sh
               bash images/publish.sh \
                 "https://github.com/$REPO_SLUG/releases/download"
@@ -125,6 +124,9 @@ jobs:
 
           mkdir -p dist
           cp -f "$tarball" dist/
+          if [ -f images/out/vm/rootfs.imgz ]; then
+            cp -f images/out/vm/rootfs.imgz dist/
+          fi
           # Everything the publish job needs goes in dist/ and only dist/, so
           # upload-artifact keeps one root and the download paths are obvious.
           cp -f images/out/publish/manifest-fragment.json dist/
@@ -141,7 +143,10 @@ jobs:
             echo "tarball:   chroot64-debian.tar.gz"
             echo "size:      $size"
             echo "sha256:    $sha"
-            echo "reproduce: CHROOT_ONLY=1 images/build-all.sh"
+            if [ -f dist/rootfs.imgz ]; then
+              echo "rootfs:    rootfs.imgz ($(stat -c%s dist/rootfs.imgz) bytes)"
+            fi
+            echo "reproduce: images/build-all.sh"
             echo
             echo "manifest block that goes with it:"
             cat images/out/publish/manifest-fragment.json
@@ -236,14 +241,20 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             dist/chroot64-debian.tar.gz
+            dist/rootfs.imgz
             dist/BUILDINFO.txt
             dist/rootfs-BUILDINFO.txt
 
       - name: Propose the manifest block for it
         run: |
           set -euo pipefail
+          extra_args=()
+          if [ -f dist/rootfs.imgz ]; then
+            extra_args+=(--rootless rootless_v2)
+          fi
           python3 images/lib/update-manifest.py stryker_manifest.json \
             --core debian_v2 \
+            "${extra_args[@]}" \
             --fragment dist/manifest-fragment.json
 
       - name: Open the pull request

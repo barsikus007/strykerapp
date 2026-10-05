@@ -150,6 +150,28 @@ class ReleasePipelineTest(unittest.TestCase):
         for legacy in ("chroot64", "chroot32", "debian"):
             self.assertEqual(core[legacy], self.before["core"][legacy])
 
+    def test_publish_with_rootless_imgz(self):
+        out = self.work / "out"
+        out.mkdir()
+        (out / "artifacts.tsv").write_text("fixture\n")
+        (out / "chroot64-debian.tar.gz").write_bytes(b"test artifact")
+        (out / "vm").mkdir()
+        (out / "vm/rootfs.imgz").write_bytes(b"rootfs imgz fixture")
+        env = {"OUT_DIR": str(out), "REPO": str(self.work), "SUITE": "trixie",
+               "CHROOT_TAG": "chroot-650-12345-2", "ROOTLESS_TAG": "rootless-650"}
+        self.run_command(["bash", str(REPO / "images/publish.sh"),
+                          "https://github.com/example/fork/releases/download"], env)
+        dist = self.work / "dist"
+        dist.mkdir()
+        shutil.copy2(out / "publish/manifest-fragment.json", dist / "manifest-fragment.json")
+        shutil.copy2(out / "vm/rootfs.imgz", dist / "rootfs.imgz")
+        self.run_command(["bash", "-euo", "pipefail", "-c",
+                          workflow_run("chroot.yml", "Propose the manifest block for it")])
+        manifest = json.loads(self.manifest.read_text())
+        self.assertEqual(manifest["rootless_v2"]["rootfs"]["url"],
+                         "https://github.com/example/fork/releases/download/rootless-650/rootfs.imgz")
+        self.assertEqual(manifest["rootless_v2"]["rootfs"]["size"], len(b"rootfs imgz fixture"))
+
     def test_explicit_chroot_identity(self):
         fragment = self.make_fragment({"CHROOT_VERSION": "custom-tree"})
         self.assertEqual(json.loads(fragment.read_text())["core"]["debian_v2"]["version"],
