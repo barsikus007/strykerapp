@@ -115,6 +115,18 @@ that PR and the app starts serving the new build.
 The Debian chroot the app installs is built by the Chroot workflow; see
 [`images/README.md`](images/README.md#what-ci-does-with-this).
 
+### Forks
+
+A build takes the repository it fetches everything from — the manifest, the chroot, the VM images, the update check, the links in the app — from the git remote this checkout came from. Clone your fork and it reads your fork; the workflows run in that repository, so what they publish is what your build looks for. No URL is hardcoded in the app.
+
+Override it only when the remote is not the answer — a mirror, or a source zip with no git at all:
+
+```sh
+./gradlew assembleRelease -PstrykerRepo=yourname/strykerapp
+```
+
+With no usable git remote the build falls back to `zalexdev/strykerapp`.
+
 ---
 
 ## Installation (end users)

@@ -185,7 +185,9 @@ jobs:
           # The Gradle value is a Groovy literal wrapping the Java literal, so the
           # source reads '"chroot-debian-trixie-uml"' -- a quote inside a quote --
           # and both quote styles have to come off the end.
-          app_chroot_id=$(awk -F'"CHROOT_ID", *' '/buildConfigField/ {print $2; exit}' \
+          # Match the CHROOT_ID field specifically, not any buildConfigField:
+          # there is more than one of them and REPO comes first.
+          app_chroot_id=$(awk -F'"CHROOT_ID", *' '/"CHROOT_ID"/ {print $2; exit}' \
             app/build.gradle | tr -d "\"' ")
           [ -n "$app_chroot_id" ] || {
             echo "::error::cannot read CHROOT_ID out of app/build.gradle"

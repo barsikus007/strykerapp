@@ -19,6 +19,7 @@ import com.google.android.material.card.MaterialCardView;
 import com.zalexdev.stryker.R;
 import com.zalexdev.stryker.utils.Core;
 import com.zalexdev.stryker.utils.LicenseActivity;
+import com.zalexdev.stryker.utils.Links;
 
 public class Account extends Fragment {
 
@@ -47,7 +48,7 @@ public class Account extends Fragment {
                 android.text.TextUtils.join(", ",
                         getResources().getStringArray(R.array.thanks_people))));
 
-        github.setOnClickListener(view -> openLink("https://github.com/zalexdev/strykerapp"));
+        github.setOnClickListener(view -> openLink(Links.GITHUB));
         info.setText(getDeviceName() + "\n" + context.getResources().getString(R.string.plata) + " " + Build.BOARD + "\n" + "Android SDK: " + Build.VERSION.SDK_INT);
         lic.setOnClickListener(v -> activity.startActivity(new Intent(activity, LicenseActivity.class)));
         return root;

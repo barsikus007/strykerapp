@@ -4,7 +4,8 @@ public final class Links {
 
     public static final String SITE = "https://stryker.zalexdev.com";
 
-    public static final String GITHUB = "https://github.com/zalexdev/strykerapp";
+    public static final String GITHUB =
+            "https://github.com/" + com.zalexdev.stryker.BuildConfig.REPO;
 
     public static final String ISSUES = GITHUB + "/issues/new";
 

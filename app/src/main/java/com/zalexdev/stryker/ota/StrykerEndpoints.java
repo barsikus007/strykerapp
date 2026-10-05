@@ -2,10 +2,12 @@ package com.zalexdev.stryker.ota;
 
 public final class StrykerEndpoints {
 
-    public static final String GITHUB_REPO = "https://github.com/zalexdev/strykerapp";
+    public static final String REPO = com.zalexdev.stryker.BuildConfig.REPO;
+
+    public static final String GITHUB_REPO = "https://github.com/" + REPO;
 
     public static final String MANIFEST_URL =
-            "https://raw.githubusercontent.com/zalexdev/strykerapp/main/stryker_manifest.json";
+            "https://raw.githubusercontent.com/" + REPO + "/main/stryker_manifest.json";
 
     // Where a chroot published for this exact build lives. The Chroot workflow
     // names its release tag chroot-<versionCode>, so this cannot drift away

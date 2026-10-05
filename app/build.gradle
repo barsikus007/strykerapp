@@ -2,6 +2,65 @@ plugins {
     id 'com.android.application'
 }
 
+ext.strykerRepoDefault = 'zalexdev/strykerapp'
+
+// "<owner>/<repo>" out of a git remote URL, or null if it is not one we can
+// build a download URL for. Only github.com is handled: the manifest lives on
+// raw.githubusercontent.com, so a remote elsewhere would produce a URL that
+// cannot resolve, and silently returning a slug we then fetch from is worse
+// than falling back.
+//
+// The character classes are the same safe set the validator accepts, so this
+// never returns something that would only be rejected further down with a
+// confusing message -- a malformed remote falls back instead.
+ext.slugFromRemote = { String url ->
+    if (url == null) return null
+    def s = url.trim()
+    if (s.isEmpty()) return null
+    if (s.startsWith('git@')) {
+        // git@github.com:owner/repo.git
+        def m = (s =~ /^git@github\.com:([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?$/)
+        return m.find() ? "${m.group(1)}/${m.group(2)}" : null
+    }
+    def m = (s =~ /^https?:\/\/(?:[^\@\/]+\@)?github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?$/)
+    return m.find() ? "${m.group(1)}/${m.group(2)}" : null
+}
+
+// Where this build fetches everything from: its manifest, the chroot, the VM
+// images, the update check and the links in the app.
+//
+// It is whatever repository this checkout came from, so a fork reads its own
+// manifest and its own release assets with nothing to configure -- and CI needs
+// no cross-check, because the app and the workflow resolve the same value by
+// construction rather than by agreeing on two of them.
+//
+// Order: -PstrykerRepo, then the git remote, then upstream. Falls back to
+// upstream when there is no usable git remote (a source zip, a tarball).
+ext.resolveStrykerRepo = { project ->
+    def explicit = project.findProperty('strykerRepo')
+    if (explicit) return explicit.toString().trim()
+
+    def remote = null
+    try {
+        def out = project.providers.exec {
+            commandLine 'git', 'config', '--get', 'remote.origin.url'
+            ignoreExitValue = true
+        }.standardOutput.asText.get()
+        remote = slugFromRemote(out)
+    } catch (Exception ignored) {
+        remote = null
+    }
+    return remote ?: project.ext.strykerRepoDefault
+}
+
+def strykerRepo = resolveStrykerRepo(project)
+if (!(strykerRepo ==~ /[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+/)) {
+    throw new GradleException(
+        "strykerRepo must look like <owner>/<repo>, got: '${strykerRepo}'. " +
+        "It ends up inside generated Java and inside every download URL.")
+}
+logger.info("strykerRepo = ${strykerRepo}")
+
 android {
     namespace 'com.zalexdev.stryker'
     compileSdk 37
@@ -13,6 +72,8 @@ android {
         targetSdk 37
         versionCode 650
         versionName "6.5.0"
+
+        buildConfigField "String", "REPO", "\"${strykerRepo}\""
 
         // Identity of the Debian tree this build expects, and the only thing
         // that decides whether an installed chroot is still the right one --
