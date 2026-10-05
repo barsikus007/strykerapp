@@ -87,9 +87,8 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build the release APK
-        # The secrets are optional on purpose: a fork or a contributor gets an
-        # unsigned APK rather than a failed job. The verify step below says so
-        # loudly, because an unsigned release cannot be installed over 6.5.
+        # The secrets are optional: a fork or a contributor gets a debug-signed
+        # APK rather than a failed job.
         env:
           STRYKER_RELEASE_STORE_FILE: ${{ secrets.STRYKER_RELEASE_STORE_FILE }}
           STRYKER_RELEASE_STORE_PASSWORD: ${{ secrets.STRYKER_RELEASE_STORE_PASSWORD }}
@@ -366,6 +365,15 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -c tag.gpgSign=false tag -fa "$TAG" -m "Stryker $TAG"
           git push --force-with-lease="refs/tags/$TAG:$old" origin "refs/tags/$TAG"
+
+      - name: Clean up obsolete unsigned assets
+        if: steps.meta.outputs.publish == 'true' && steps.asset.outputs.asset != format('Stryker.{0}-unsigned.apk', steps.meta.outputs.tag)
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete-asset "$TAG" "Stryker.$TAG-unsigned.apk" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+          gh release delete-asset "$TAG" "Stryker.$TAG-unsigned-mapping.txt" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
 
       - name: Publish the APK to the existing release
         if: steps.meta.outputs.publish == 'true'

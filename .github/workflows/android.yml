@@ -42,6 +42,11 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build with Gradle
+        env:
+          STRYKER_RELEASE_STORE_FILE: ${{ secrets.STRYKER_RELEASE_STORE_FILE }}
+          STRYKER_RELEASE_STORE_PASSWORD: ${{ secrets.STRYKER_RELEASE_STORE_PASSWORD }}
+          STRYKER_RELEASE_KEY_ALIAS: ${{ secrets.STRYKER_RELEASE_KEY_ALIAS }}
+          STRYKER_RELEASE_KEY_PASSWORD: ${{ secrets.STRYKER_RELEASE_KEY_PASSWORD }}
         run: ./gradlew build --stacktrace
 
       - name: Upload debug APK

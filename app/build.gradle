@@ -131,6 +131,8 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             if (project.findProperty('STRYKER_RELEASE_STORE_FILE') || System.getenv('STRYKER_RELEASE_STORE_FILE')) {
                 signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
             }
         }
 
