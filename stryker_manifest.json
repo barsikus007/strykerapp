@@ -28,9 +28,9 @@
       "version": "chroot-debian-trixie-uml",
       "note": "Debian trixie arm64. Same tree as the rootless VM image; drivers are built into the guest kernel, SSH is the transport.",
       "chroot64": {
-        "url": "https://github.com/barsikus007/strykerapp/releases/download/chroot-650-37325671309-1/chroot64-debian.tar.gz",
-        "sha256": "57e7d436816c0974c28f950debe11ed19d88f0fbff31fedf5903a6634c108046",
-        "size": 280669793
+        "url": "https://github.com/barsikus007/strykerapp/releases/download/chroot-650-37397201069-1/chroot64-debian.tar.gz",
+        "sha256": "635f1ea53228232a0e385d2aa24b5a03352032b20f504b534289bd66451b7e9e",
+        "size": 280669858
       }
     }
   },
@@ -122,7 +122,7 @@
   "notifications": [],
   "rootless_v2": {
     "min_version_code": 650,
-    "version": "rootless-650",
+    "version": "chroot-650-37397201069-1",
     "note": "Kernel 7.2 from the UML port tree; one rootfs for both QEMU and UML. Guest is reached over SSH.",
     "kernel_release": "7.2.0-rc4-g8897487c5223",
     "qemu": {
@@ -146,9 +146,9 @@
       "size": 16308339
     },
     "rootfs": {
-      "url": "https://github.com/zalexdev/strykerapp/releases/download/rootless-650/rootfs.imgz",
-      "sha256": "dfa844f8b9cebe121b60ecdb4da9c41ffd701430b2c9d0f6bdc90c66d2c26c82",
-      "size": 321664844
+      "url": "https://github.com/barsikus007/strykerapp/releases/download/chroot-650-37397201069-1/rootfs.imgz",
+      "sha256": "5ca570160d5491111ceb93edfcdc95dd023d85dd93ef83d6dd8070a7675d603c",
+      "size": 284261504
     },
     "uml_kernel": {
       "url": "https://github.com/zalexdev/strykerapp/releases/download/rootless-650/linux-uml",
