@@ -95,6 +95,7 @@ jobs:
           docker run --rm --privileged \
             -e SUITE="$SUITE" \
             -e CHROOT_TAG="$TAG" \
+            -e ROOTLESS_TAG="$TAG" \
             -e BINFMT_DIR=/host-binfmt \
             -e REPO_SLUG="$GITHUB_REPOSITORY" \
             -e SOURCE_DATE_EPOCH=0 \
